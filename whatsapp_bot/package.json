@@ -1,0 +1,15 @@
+{
+  "name": "vidsnatch-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot that downloads YouTube videos via VidSnatch",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "eventsource": "^2.0.2",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}

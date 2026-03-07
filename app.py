@@ -1,0 +1,450 @@
+import os
+import re
+import json
+import uuid
+import shutil
+import zipfile
+import threading
+import subprocess
+from pathlib import Path
+from flask import Flask, request, jsonify, Response, send_file, send_from_directory
+from flask_cors import CORS
+
+app = Flask(__name__, static_folder='.')
+CORS(app)
+
+DOWNLOADS_DIR = Path('downloads')
+DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+# Store SSE progress queues per session
+progress_queues = {}
+progress_lock = threading.Lock()
+
+
+def sanitize_filename(name):
+    return re.sub(r'[\\/*?:"<>|]', '_', name)
+
+
+def get_yt_dlp_path():
+    for cmd in ['yt-dlp', 'yt_dlp', 'python -m yt_dlp']:
+        try:
+            result = subprocess.run(cmd.split() + ['--version'],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return cmd.split()
+        except Exception:
+            continue
+    return ['yt-dlp']
+
+
+def get_ffmpeg_path():
+    """Return the absolute path to ffmpeg, or just 'ffmpeg' as fallback."""
+    found = shutil.which('ffmpeg')
+    if found:
+        return found
+    # Common Homebrew / system locations
+    for p in ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']:
+        if os.path.isfile(p):
+            return p
+    return 'ffmpeg'
+
+
+YT_DLP = get_yt_dlp_path()
+FFMPEG = get_ffmpeg_path()
+
+
+def run_yt_dlp(args, timeout=60):
+    cmd = YT_DLP + args
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return result
+
+
+@app.route('/')
+def index():
+    return send_from_directory('.', 'index.html')
+
+
+@app.route('/downloads/<path:filename>')
+def serve_download(filename):
+    return send_from_directory(str(DOWNLOADS_DIR.absolute()), filename, as_attachment=True)
+
+
+@app.route('/api/fetch', methods=['POST'])
+def fetch_info():
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+
+    try:
+        result = run_yt_dlp([
+            '--dump-json',
+            '--no-playlist' if 'list=' not in url else '--yes-playlist',
+            '--flat-playlist',
+            url
+        ], timeout=30)
+
+        if result.returncode != 0:
+            err = result.stderr.lower()
+            if 'private' in err:
+                return jsonify({'error': 'This video is private and cannot be downloaded.'}), 400
+            elif 'age' in err:
+                return jsonify({'error': 'This video is age-restricted.'}), 400
+            elif 'unavailable' in err or 'not available' in err:
+                return jsonify({'error': 'This video is unavailable in your region.'}), 400
+            elif 'copyright' in err:
+                return jsonify({'error': 'This video has been removed due to copyright.'}), 400
+            return jsonify({'error': 'Failed to fetch video info. Please check the URL.'}), 400
+
+        lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
+        if not lines:
+            return jsonify({'error': 'No video information returned.'}), 400
+
+        # Check if playlist
+        first = json.loads(lines[0])
+        is_playlist = first.get('_type') == 'playlist' or len(lines) > 1
+
+        if is_playlist or 'list=' in url:
+            # Try to get playlist info
+            pl_result = run_yt_dlp([
+                '--dump-single-json',
+                '--flat-playlist',
+                '--yes-playlist',
+                url
+            ], timeout=60)
+
+            if pl_result.returncode == 0 and pl_result.stdout.strip():
+                pl_data = json.loads(pl_result.stdout.strip())
+                entries = pl_data.get('entries', [])
+                videos = []
+                for e in entries:
+                    videos.append({
+                        'title': e.get('title', 'Unknown'),
+                        'id': e.get('id', ''),
+                        'url': e.get('url') or e.get('webpage_url') or f"https://www.youtube.com/watch?v={e.get('id','')}",
+                        'thumbnail': e.get('thumbnail') or e.get('thumbnails', [{}])[-1].get('url', '') if e.get('thumbnails') else '',
+                        'duration': e.get('duration', 0),
+                    })
+                return jsonify({
+                    'type': 'playlist',
+                    'title': pl_data.get('title', 'Playlist'),
+                    'channel': pl_data.get('uploader') or pl_data.get('channel', ''),
+                    'thumbnail': (entries[0].get('thumbnail') or '') if entries else '',
+                    'count': len(entries),
+                    'videos': videos,
+                    'formats': ['mp4', 'mp3'],
+                    'qualities': ['1080p', '720p', '480p', '360p'],
+                })
+
+        # Single video - get full format info
+        info_result = run_yt_dlp([
+            '--dump-single-json',
+            '--no-playlist',
+            url
+        ], timeout=30)
+
+        if info_result.returncode != 0:
+            return jsonify({'error': 'Failed to fetch video details.'}), 400
+
+        info = json.loads(info_result.stdout.strip())
+
+        # Extract available heights
+        formats = info.get('formats', [])
+        heights = set()
+        for f in formats:
+            h = f.get('height')
+            if h and f.get('vcodec') != 'none':
+                heights.add(h)
+
+        quality_map = {1080: '1080p', 720: '720p', 480: '480p', 360: '360p'}
+        available = [quality_map[h] for h in sorted(heights, reverse=True) if h in quality_map]
+        if not available:
+            available = ['720p', '480p', '360p']
+
+        duration = info.get('duration', 0)
+        view_count = info.get('view_count', 0)
+
+        return jsonify({
+            'type': 'video',
+            'title': info.get('title', 'Unknown'),
+            'channel': info.get('uploader') or info.get('channel', ''),
+            'thumbnail': info.get('thumbnail', ''),
+            'duration': duration,
+            'view_count': view_count,
+            'formats': ['mp4', 'mp3'],
+            'qualities': available,
+        })
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Could not parse video information.'}), 400
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Request timed out. Please try again.'}), 408
+    except Exception as e:
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+
+
+def parse_progress(line):
+    """Parse yt-dlp progress output."""
+    # [download]  45.2% of  123.45MiB at  2.34MiB/s ETA 00:12
+    match = re.search(
+        r'\[download\]\s+([\d.]+)%\s+of\s+([\d.]+\w+)\s+at\s+([\d.]+\w+/s)\s+ETA\s+(\S+)',
+        line
+    )
+    if match:
+        return {
+            'percent': float(match.group(1)),
+            'size': match.group(2),
+            'speed': match.group(3),
+            'eta': match.group(4),
+        }
+    return None
+
+
+def download_worker(session_id, url, fmt, quality, is_playlist):
+    # queue initialized in main thread before worker starts
+
+    def send(event_type, data):
+        with progress_lock:
+            if session_id in progress_queues:
+                progress_queues[session_id].append({
+                    'event': event_type,
+                    'data': data
+                })
+
+    try:
+        session_dir = DOWNLOADS_DIR / session_id
+        session_dir.mkdir(exist_ok=True)
+
+        if fmt == 'mp3':
+            # quality is e.g. "320k", "192k", "128k"
+            bitrate = quality.replace('k', '') if quality.endswith('k') else '192'
+            format_opts = [
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', f'{bitrate}K',
+            ]
+        else:
+            quality_num = quality.replace('p', '')
+            # Prefer mp4+m4a merge; fall back to any video+audio; last resort: best
+            format_opts = [
+                '-f', (
+                    # Prefer H.264 (avc1) so no re-encoding is needed downstream
+                    f'bestvideo[height<={quality_num}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]'
+                    f'/bestvideo[height<={quality_num}][vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]'
+                    f'/bestvideo[height<={quality_num}][ext=mp4]+bestaudio[ext=m4a]'
+                    f'/bestvideo[height<={quality_num}]+bestaudio'
+                    f'/best[height<={quality_num}]'
+                    f'/best'
+                ),
+                '--merge-output-format', 'mp4',
+            ]
+
+        playlist_opt = ['--yes-playlist'] if is_playlist else ['--no-playlist']
+
+        cmd = YT_DLP + [
+            '--newline',
+            '--progress',
+            '-o', str(session_dir / '%(title)s.%(ext)s'),
+            '--ffmpeg-location', FFMPEG,
+        ] + format_opts + playlist_opt + [url]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+
+        current_video = ''
+        video_index = 0
+        total_videos = 1
+
+        stderr_lines = []
+
+        # Read stdout line-by-line for progress; collect stderr in background
+        import threading as _t
+        def _read_stderr():
+            for l in process.stderr:
+                stderr_lines.append(l.strip())
+        _t.Thread(target=_read_stderr, daemon=True).start()
+
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Detect current video in playlist
+            if '[download] Downloading item' in line:
+                m = re.search(r'Downloading item (\d+) of (\d+)', line)
+                if m:
+                    video_index = int(m.group(1))
+                    total_videos = int(m.group(2))
+                    send('playlist_progress', {
+                        'current': video_index,
+                        'total': total_videos,
+                    })
+            elif '[download] Destination:' in line:
+                current_video = line.replace('[download] Destination:', '').strip()
+                current_video = Path(current_video).name
+                send('video_start', {'title': current_video, 'index': video_index})
+
+            prog = parse_progress(line)
+            if prog:
+                if is_playlist:
+                    overall = ((video_index - 1) / max(total_videos, 1) * 100) + (prog['percent'] / max(total_videos, 1))
+                    prog['overall_percent'] = round(overall, 1)
+                    prog['current_video'] = video_index
+                    prog['total_videos'] = total_videos
+                    prog['current_title'] = current_video
+                send('progress', prog)
+
+        process.wait()
+
+        if process.returncode != 0:
+            # Surface actual yt-dlp error if available
+            err_text = ' '.join(stderr_lines).lower()
+            if 'private' in err_text:
+                msg = 'This video is private and cannot be downloaded.'
+            elif 'age' in err_text:
+                msg = 'This video is age-restricted.'
+            elif 'copyright' in err_text:
+                msg = 'Blocked due to copyright.'
+            elif 'unavailable' in err_text or 'not available' in err_text:
+                msg = 'This video is unavailable.'
+            elif 'ffmpeg' in err_text:
+                msg = f'FFmpeg error — ensure ffmpeg is installed. Detail: {stderr_lines[-1] if stderr_lines else ""}'
+            else:
+                msg = stderr_lines[-1] if stderr_lines else 'Download failed.'
+            send('error', {'message': msg})
+            return
+
+        # Collect output files
+        files = list(session_dir.glob('*'))
+        if not files:
+            send('error', {'message': 'No files were downloaded.'})
+            return
+
+        if is_playlist and len(files) > 1:
+            zip_name = f'playlist_{session_id}.zip'
+            zip_path = DOWNLOADS_DIR / zip_name
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for f in files:
+                    zf.write(f, f.name)
+            send('complete', {
+                'type': 'zip',
+                'filename': zip_name,
+                'url': f'/downloads/{zip_name}',
+            })
+        else:
+            f = files[0]
+            dest = DOWNLOADS_DIR / f.name
+            f.rename(dest)
+            send('complete', {
+                'type': 'file',
+                'filename': f.name,
+                'url': f'/downloads/{f.name}',
+            })
+
+        # Cleanup session dir
+        try:
+            for f in session_dir.glob('*'):
+                f.unlink()
+            session_dir.rmdir()
+        except Exception:
+            pass
+
+    except Exception as e:
+        send('error', {'message': str(e)})
+    finally:
+        send('done', {})
+
+
+@app.route('/api/download', methods=['POST'])
+def start_download():
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
+    fmt = (data or {}).get('format', 'mp4')
+    quality = (data or {}).get('quality', '720p')
+    is_playlist = (data or {}).get('is_playlist', False)
+
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+
+    session_id = str(uuid.uuid4())
+    with progress_lock:
+        progress_queues[session_id] = []
+
+    thread = threading.Thread(
+        target=download_worker,
+        args=(session_id, url, fmt, quality, is_playlist),
+        daemon=True
+    )
+    thread.start()
+
+    return jsonify({'session_id': session_id})
+
+
+@app.route('/api/progress/<session_id>')
+def progress_stream(session_id):
+    def generate():
+        import time
+        last_done = False
+        while not last_done:
+            with progress_lock:
+                queue = progress_queues.get(session_id, [])
+                events = queue.copy()
+                if session_id in progress_queues:
+                    progress_queues[session_id] = []
+
+            for item in events:
+                yield f"event: {item['event']}\ndata: {json.dumps(item['data'])}\n\n"
+                if item['event'] == 'done':
+                    last_done = True
+                    break
+
+            if not last_done:
+                time.sleep(0.3)
+
+        with progress_lock:
+            progress_queues.pop(session_id, None)
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        }
+    )
+
+
+@app.route('/api/health')
+def health():
+    try:
+        r = run_yt_dlp(['--version'], timeout=5)
+        ytdlp_ok = r.returncode == 0
+        ytdlp_version = r.stdout.strip() if ytdlp_ok else 'not found'
+    except Exception:
+        ytdlp_ok = False
+        ytdlp_version = 'not found'
+
+    try:
+        r2 = subprocess.run([FFMPEG, '-version'], capture_output=True, timeout=5)
+        ffmpeg_ok = r2.returncode == 0
+    except Exception:
+        ffmpeg_ok = False
+
+    return jsonify({
+        'status': 'ok',
+        'yt_dlp': ytdlp_version,
+        'yt_dlp_ok': ytdlp_ok,
+        'ffmpeg_ok': ffmpeg_ok,
+    })
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)

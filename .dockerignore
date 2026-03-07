@@ -1,0 +1,7 @@
+downloads/
+whatsapp_bot/.wwebjs_auth/
+whatsapp_bot/node_modules/
+__pycache__/
+*.pyc
+.git/
+*.log
