@@ -59,6 +59,9 @@ def run_yt_dlp(args, timeout=60):
     return result
 
 
+QR_PATH = Path('qr.png')  # written by the bot process
+
+
 @app.route('/')
 def index():
     return send_from_directory('.', 'index.html')
@@ -67,6 +70,69 @@ def index():
 @app.route('/downloads/<path:filename>')
 def serve_download(filename):
     return send_from_directory(str(DOWNLOADS_DIR.absolute()), filename, as_attachment=True)
+
+
+@app.route('/qr')
+def qr_page():
+    """Serve a scannable QR page. Visit this URL on Railway to link WhatsApp."""
+    connected = not QR_PATH.exists()
+    if connected:
+        html = '''<!DOCTYPE html>
+<html><head><meta charset="UTF-8"/>
+<meta http-equiv="refresh" content="5"/>
+<title>VidSnatch — WhatsApp Status</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#f1f5f9;
+       display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px;}
+  .icon{font-size:72px;}
+  h1{font-size:28px;font-weight:800;color:#22c55e;margin:0;}
+  p{color:#94a3b8;margin:0;}
+</style></head><body>
+<div class="icon">✅</div>
+<h1>Bot is Connected!</h1>
+<p>WhatsApp is linked and the bot is running.</p>
+<p style="margin-top:8px;font-size:13px;">This page auto-refreshes every 5 seconds.</p>
+</body></html>'''
+    else:
+        html = '''<!DOCTYPE html>
+<html><head><meta charset="UTF-8"/>
+<meta http-equiv="refresh" content="20"/>
+<title>VidSnatch — Scan QR</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#f1f5f9;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;}
+  .card{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+        border-radius:20px;padding:40px;text-align:center;max-width:420px;width:100%;}
+  h1{font-size:26px;font-weight:800;background:linear-gradient(135deg,#8b5cf6,#3b82f6);
+     -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;}
+  p{color:#94a3b8;font-size:14px;margin-bottom:24px;line-height:1.6;}
+  img{width:280px;height:280px;border-radius:12px;background:white;padding:12px;}
+  .steps{text-align:left;margin-top:24px;font-size:13px;color:#64748b;line-height:2;}
+  .refresh{margin-top:16px;font-size:12px;color:#475569;}
+</style></head><body>
+<div class="card">
+  <h1>📱 Link WhatsApp</h1>
+  <p>Scan this QR code with WhatsApp to activate VidSnatch bot.<br/>QR auto-refreshes every 20 seconds.</p>
+  <img src="/qr/image" alt="WhatsApp QR Code"/>
+  <div class="steps">
+    1. Open WhatsApp on your phone<br/>
+    2. Go to <strong>Settings → Linked Devices</strong><br/>
+    3. Tap <strong>Link a Device</strong><br/>
+    4. Point camera at the QR above
+  </div>
+  <div class="refresh">Page auto-refreshes every 20 seconds</div>
+</div>
+</body></html>'''
+    return html, 200, {'Content-Type': 'text/html'}
+
+
+@app.route('/qr/image')
+def qr_image():
+    """Serve the raw QR PNG for embedding in the /qr page."""
+    if QR_PATH.exists():
+        return send_file(str(QR_PATH.absolute()), mimetype='image/png')
+    return '', 404
 
 
 SUPPORTED_DOMAINS = (

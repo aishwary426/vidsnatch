@@ -304,27 +304,30 @@ async function handleMessage(msg, client) {
 function startBot() {
   const client = createClient();
 
+  // Shared QR file — Flask serves it at /qr/image
+  const QR_FILE = path.join(__dirname, '..', 'qr.png');
+
   client.on('qr', qr => {
     console.log('\n========================================');
-    console.log('📱 SCAN THIS QR CODE WITH WHATSAPP');
-    console.log('   Settings → Linked Devices → Link a Device');
+    console.log('📱 SCAN QR: visit  /qr  on your server');
+    console.log('   Local: http://localhost:5001/qr');
     console.log('========================================\n');
     qrcode.generate(qr, { small: true });
 
-    // Also save as PNG so it can be opened directly
-    const qrPath = path.join(__dirname, 'qr.png');
-    QRCode.toFile(qrPath, qr, { width: 400, margin: 2 }, err => {
-      if (!err) {
-        console.log(`\n✅ QR also saved as image: ${qrPath}`);
-        // Auto-open on macOS
-        const { exec } = require('child_process');
-        exec(`open "${qrPath}"`, () => {});
-      }
+    // Write QR image to project root so Flask can serve it
+    QRCode.toFile(QR_FILE, qr, { width: 400, margin: 2 }, err => {
+      if (err) return;
+      // Auto-open on macOS during local dev
+      const { exec } = require('child_process');
+      exec(`open "${QR_FILE}" 2>/dev/null`, () => {});
     });
-    console.log('\n========================================\n');
   });
 
-  client.on('authenticated', () => console.log('✅ WhatsApp authenticated'));
+  client.on('authenticated', () => {
+    // Delete QR file so /qr page switches to "Connected" state
+    try { fs.unlinkSync(QR_FILE); } catch {}
+    console.log('✅ WhatsApp authenticated');
+  });
   client.on('auth_failure', msg => {
     console.error('❌ Auth failed:', msg);
     console.log('Deleting session and restarting...');
