@@ -66,19 +66,32 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 // Use system Chromium if available (Docker), else let Puppeteer find its own
 const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
 
-// ── YouTube URL regex ─────────────────────────────────────────────
-const YT_REGEX = /(?:https?:\/\/)?(?:(?:www\.)?youtube\.com\/(?:watch\?(?:[^&\s]*&)*v=|shorts\/|playlist\?list=)|youtu\.be\/)[\w\-?=&%]+/i;
+// ── Multi-platform URL regex ──────────────────────────────────────
+const MEDIA_REGEX = /https?:\/\/(?:www\.|m\.|web\.)?(?:youtube\.com\/(?:watch\?[^\s]*v=|shorts\/|playlist\?list=)|youtu\.be\/|instagram\.com\/(?:p|reel|tv|stories)\/|instagr\.am\/|facebook\.com\/(?:watch|reel|video|share)[/?]|fb\.watch\/|twitter\.com\/\w+\/status\/|x\.com\/\w+\/status\/|tiktok\.com\/@[\w.]+\/video\/|vm\.tiktok\.com\/)[^\s<>"']*/i;
+
+function detectPlatform(url) {
+  if (/instagram\.com|instagr\.am/i.test(url)) return 'instagram';
+  if (/facebook\.com|fb\.watch/i.test(url))    return 'facebook';
+  if (/tiktok\.com|vm\.tiktok/i.test(url))     return 'tiktok';
+  if (/twitter\.com|x\.com/i.test(url))        return 'twitter';
+  return 'youtube';
+}
+
+const PLATFORM_ICON = {
+  youtube: '▶️', instagram: '📸', facebook: '🔵', tiktok: '🎵', twitter: '🐦',
+};
 
 // ── Parse user command ────────────────────────────────────────────
 function parseCommand(text) {
-  const urlMatch = text.match(YT_REGEX);
+  const urlMatch = text.match(MEDIA_REGEX);
   if (!urlMatch) return null;
 
-  const url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
+  const url = urlMatch[0];
   const rest = text.replace(urlMatch[0], '').toLowerCase().trim();
+  const platform = detectPlatform(url);
 
   let fmt = 'mp4';
-  let quality = '720p';
+  let quality = '480p';
 
   if (rest.includes('mp3') || rest.includes('audio') || rest.includes('song')) {
     fmt = 'mp3';
@@ -89,11 +102,11 @@ function parseCommand(text) {
     if (rest.includes('1080')) quality = '1080p';
     else if (rest.includes('720')) quality = '720p';
     else if (rest.includes('360')) quality = '360p';
-    else quality = '480p'; // default: fast download + upload
+    else quality = '480p';
   }
 
-  const isPlaylist = url.includes('list=') && !url.includes('watch?v=');
-  return { url, fmt, quality, isPlaylist };
+  const isPlaylist = platform === 'youtube' && url.includes('list=') && !url.includes('watch?v=');
+  return { url, fmt, quality, isPlaylist, platform };
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────
@@ -200,7 +213,8 @@ async function handleMessage(msg, client) {
   const cmd = parseCommand(msg.body);
   if (!cmd) return;
 
-  const { url, fmt, quality, isPlaylist } = cmd;
+  const { url, fmt, quality, isPlaylist, platform } = cmd;
+  const icon = PLATFORM_ICON[platform] || '🎬';
   const label = fmt === 'mp3' ? `MP3 ${quality}` : `MP4 ${quality}`;
   console.log(`[${new Date().toLocaleTimeString()}] ${msg.from} → ${url} (${label})`);
 
@@ -225,9 +239,9 @@ async function handleMessage(msg, client) {
     const isPlaylistMeta = meta.type === 'playlist';
 
     const infoLines = [
-      `📥 *${metaTitle}*`,
+      `${icon} *${metaTitle}*`,
       isPlaylistMeta ? `📋 Playlist — ${meta.count} videos` : '',
-      meta.channel ? `📺 ${meta.channel}` : '',
+      meta.channel ? `👤 ${meta.channel}` : '',
       `🎯 Format: ${label}`,
       `⏳ Downloading, please wait...`,
     ].filter(Boolean).join('\n');

@@ -978,7 +978,7 @@
       <div class="logo-icon">⬇</div>
       <div>
         <div class="logo-text">VidSnatch</div>
-        <div class="logo-sub">YouTube Downloader</div>
+        <div class="logo-sub">Multi-Platform Downloader</div>
       </div>
     </div>
 
@@ -1005,7 +1005,7 @@
     <div class="main-inner">
       <div class="page-header">
         <h1 class="page-title">VidSnatch</h1>
-        <p class="page-subtitle">Download YouTube videos and playlists in MP4 or MP3</p>
+        <p class="page-subtitle">Download from YouTube, Instagram, Facebook, TikTok & Twitter in MP4 or MP3</p>
       </div>
 
       <!-- URL Input -->
@@ -1015,7 +1015,7 @@
             type="url"
             class="url-input"
             id="urlInput"
-            placeholder="Paste YouTube URL here..."
+            placeholder="Paste YouTube, Instagram, Facebook, TikTok or Twitter URL..."
             autocomplete="off"
             spellcheck="false"
           />
@@ -1204,21 +1204,30 @@ function setFetching(v) {
 // ── Enter key on URL input ─────────────────────────────────────────
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') fetchInfo(); });
 
+const SUPPORTED_DOMAINS = ['youtube.com','youtu.be','instagram.com','instagr.am','facebook.com','fb.watch','tiktok.com','vm.tiktok.com','twitter.com','x.com'];
+const PLATFORM_ICONS = { youtube:'▶️', instagram:'📸', facebook:'🔵', tiktok:'🎵', twitter:'🐦' };
+
+function detectPlatform(url) {
+  if (/instagram\.com|instagr\.am/i.test(url)) return 'instagram';
+  if (/facebook\.com|fb\.watch/i.test(url))    return 'facebook';
+  if (/tiktok\.com/i.test(url))                return 'tiktok';
+  if (/twitter\.com|x\.com/i.test(url))        return 'twitter';
+  return 'youtube';
+}
+
 // Auto-paste detection
 urlInput.addEventListener('paste', () => {
   setTimeout(() => {
-    if (urlInput.value.includes('youtube.com') || urlInput.value.includes('youtu.be')) {
-      fetchInfo();
-    }
+    if (SUPPORTED_DOMAINS.some(d => urlInput.value.includes(d))) fetchInfo();
   }, 100);
 });
 
 // ── Fetch metadata ─────────────────────────────────────────────────
 async function fetchInfo() {
   const url = urlInput.value.trim();
-  if (!url) { showError('Please enter a YouTube URL.'); return; }
-  if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
-    showError('Please enter a valid YouTube URL.');
+  if (!url) { showError('Please enter a URL.'); return; }
+  if (!SUPPORTED_DOMAINS.some(d => url.includes(d))) {
+    showError('Unsupported URL. Paste a YouTube, Instagram, Facebook, TikTok, or Twitter link.');
     return;
   }
 
@@ -1253,21 +1262,23 @@ function renderPreview(data) {
   const isPlaylist = data.type === 'playlist';
   const dur = formatDuration(data.duration);
   const views = formatViews(data.view_count);
-  const typeLabel = isPlaylist ? 'Playlist' : 'Video';
+  const platform = data.platform || detectPlatform(currentMeta.url || '');
+  const platformIcon = PLATFORM_ICONS[platform] || '🎬';
+  const typeLabel = isPlaylist ? 'Playlist' : (platform.charAt(0).toUpperCase() + platform.slice(1));
   const typeBadge = isPlaylist ? 'badge-playlist' : 'badge-video';
 
   videoPreview.innerHTML = `
     <div class="thumb-wrap">
       ${data.thumbnail
         ? `<img src="${escHtml(data.thumbnail)}" alt="thumbnail" onerror="this.style.display='none'">`
-        : '<div style="width:200px;height:112px;background:var(--surface2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:36px;">🎬</div>'}
+        : `<div style="width:200px;height:112px;background:var(--surface2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:36px;">${platformIcon}</div>`}
       ${dur ? `<div class="thumb-duration">${escHtml(dur)}</div>` : ''}
     </div>
     <div class="video-info">
-      <div class="video-type-badge ${typeBadge}">${typeLabel}</div>
+      <div class="video-type-badge ${typeBadge}">${platformIcon} ${typeLabel}</div>
       <div class="video-title">${escHtml(data.title)}</div>
       <div class="video-meta">
-        ${data.channel ? `<span class="meta-item"><span class="meta-icon">📺</span>${escHtml(data.channel)}</span>` : ''}
+        ${data.channel ? `<span class="meta-item"><span class="meta-icon">👤</span>${escHtml(data.channel)}</span>` : ''}
         ${dur ? `<span class="meta-item"><span class="meta-icon">⏱</span>${escHtml(dur)}</span>` : ''}
         ${views ? `<span class="meta-item"><span class="meta-icon">👁</span>${views}</span>` : ''}
         ${isPlaylist ? `<span class="meta-item"><span class="meta-icon">📋</span>${data.count} videos</span>` : ''}

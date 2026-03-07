@@ -69,6 +69,34 @@ def serve_download(filename):
     return send_from_directory(str(DOWNLOADS_DIR.absolute()), filename, as_attachment=True)
 
 
+SUPPORTED_DOMAINS = (
+    'youtube.com', 'youtu.be',
+    'instagram.com', 'instagr.am',
+    'facebook.com', 'fb.watch', 'fb.com',
+    'twitter.com', 'x.com',
+    'tiktok.com',
+)
+
+def detect_platform(url):
+    url_l = url.lower()
+    if 'instagram.com' in url_l or 'instagr.am' in url_l:
+        return 'instagram'
+    if 'facebook.com' in url_l or 'fb.watch' in url_l:
+        return 'facebook'
+    if 'tiktok.com' in url_l:
+        return 'tiktok'
+    if 'twitter.com' in url_l or 'x.com' in url_l:
+        return 'twitter'
+    return 'youtube'
+
+def is_playlist_url(url, platform):
+    if platform == 'youtube':
+        return 'list=' in url and 'watch?v=' not in url
+    if platform == 'instagram':
+        return '/stories/' in url or '?highlight=' in url
+    return False
+
+
 @app.route('/api/fetch', methods=['POST'])
 def fetch_info():
     data = request.get_json()
@@ -76,10 +104,16 @@ def fetch_info():
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
+    if not any(d in url.lower() for d in SUPPORTED_DOMAINS):
+        return jsonify({'error': 'Unsupported URL. Paste a YouTube, Instagram, Facebook, TikTok, or Twitter/X link.'}), 400
+
+    platform = detect_platform(url)
+    playlist_url = is_playlist_url(url, platform)
+
     try:
         result = run_yt_dlp([
             '--dump-json',
-            '--no-playlist' if 'list=' not in url else '--yes-playlist',
+            '--yes-playlist' if playlist_url else '--no-playlist',
             '--flat-playlist',
             url
         ], timeout=30)
@@ -104,7 +138,7 @@ def fetch_info():
         first = json.loads(lines[0])
         is_playlist = first.get('_type') == 'playlist' or len(lines) > 1
 
-        if is_playlist or 'list=' in url:
+        if is_playlist or playlist_url:
             # Try to get playlist info
             pl_result = run_yt_dlp([
                 '--dump-single-json',
@@ -166,6 +200,7 @@ def fetch_info():
 
         return jsonify({
             'type': 'video',
+            'platform': platform,
             'title': info.get('title', 'Unknown'),
             'channel': info.get('uploader') or info.get('channel', ''),
             'thumbnail': info.get('thumbnail', ''),
