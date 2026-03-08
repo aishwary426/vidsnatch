@@ -345,10 +345,12 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             platform = detect_platform(url)
             if platform in ('instagram', 'tiktok', 'facebook'):
                 # Instagram/TikTok/FB use DASH streams (separate video+audio tracks).
+                # Reels are portrait (e.g. 720x1280): quality_num maps to WIDTH, not height.
+                # Use width-based filter so "720p" captures the 720x1280 stream.
                 format_opts = [
                     '-f', (
-                        f'bestvideo[height<={quality_num}]+bestaudio'
-                        f'/best[height<={quality_num}]'
+                        f'bestvideo[width<={quality_num}]+bestaudio'
+                        f'/bestvideo+bestaudio'
                         f'/best'
                     ),
                     '--merge-output-format', 'mp4',
