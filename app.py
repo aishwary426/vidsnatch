@@ -182,7 +182,7 @@ def fetch_info():
             '--add-header', 'Accept-Language:en-US,en;q=0.9',
         ]
         if platform == 'youtube':
-            fetch_extra = ['--extractor-args', 'youtube:player_client=ios,web,mweb', '--no-check-certificates']
+            fetch_extra = ['--extractor-args', 'youtube:player_client=android,ios', '--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
@@ -203,7 +203,7 @@ def fetch_info():
                 return jsonify({'error': 'This video is private and cannot be downloaded.'}), 400
             elif 'age-restrict' in err or 'confirm your age' in err or 'inappropriate for some users' in err:
                 return jsonify({'error': 'This video is age-restricted.'}), 400
-            elif 'login' in err or 'log in' in err or 'signin' in err or 'authentication' in err or '401' in err:
+            elif 'login required' in err or 'login_required' in err or 'log in to' in err or 'not logged in' in err:
                 return jsonify({'error': 'This content requires login. Instagram/Facebook private content cannot be downloaded.'}), 400
             elif 'copyright' in err:
                 return jsonify({'error': 'This video has been removed due to copyright.'}), 400
@@ -373,7 +373,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
 
         platform = detect_platform(url)
         if platform == 'youtube':
-            yt_extra = ['--extractor-args', 'youtube:player_client=ios,web,mweb', '--no-check-certificates']
+            yt_extra = ['--extractor-args', 'youtube:player_client=android,ios', '--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
             yt_extra = [
                 '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
