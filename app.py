@@ -177,18 +177,20 @@ def fetch_info():
     playlist_url = is_playlist_url(url, platform)
 
     try:
+        mobile_ua = ['--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1']
+        fetch_extra = mobile_ua if platform in ('instagram', 'facebook', 'tiktok') else []
+
         result = run_yt_dlp([
             '--dump-json',
             '--yes-playlist' if playlist_url else '--no-playlist',
             '--flat-playlist',
-            url
-        ], timeout=30)
+        ] + fetch_extra + [url], timeout=30)
 
         if result.returncode != 0:
             err = result.stderr.lower()
             if 'private' in err:
                 return jsonify({'error': 'This video is private and cannot be downloaded.'}), 400
-            elif 'age' in err:
+            elif 'age-restrict' in err or 'confirm your age' in err or 'inappropriate for some users' in err:
                 return jsonify({'error': 'This video is age-restricted.'}), 400
             elif 'unavailable' in err or 'not available' in err:
                 return jsonify({'error': 'This video is unavailable in your region.'}), 400
@@ -343,10 +345,13 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
         playlist_opt = ['--yes-playlist'] if is_playlist else ['--no-playlist']
 
         platform = detect_platform(url)
-        yt_extra = (
-            ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
-            if platform == 'youtube' else []
-        )
+        if platform == 'youtube':
+            yt_extra = ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
+        elif platform in ('instagram', 'facebook', 'tiktok'):
+            # Instagram/TikTok/FB use mobile User-Agent to avoid login-wall errors
+            yt_extra = ['--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1']
+        else:
+            yt_extra = []
 
         cmd = YT_DLP + [
             '--newline',
@@ -413,7 +418,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             err_text = ' '.join(stderr_lines).lower()
             if 'private' in err_text:
                 msg = 'This video is private and cannot be downloaded.'
-            elif 'age' in err_text:
+            elif 'age-restrict' in err_text or 'confirm your age' in err_text or 'inappropriate for some users' in err_text:
                 msg = 'This video is age-restricted.'
             elif 'copyright' in err_text:
                 msg = 'Blocked due to copyright.'
