@@ -182,7 +182,7 @@ def fetch_info():
             '--add-header', 'Accept-Language:en-US,en;q=0.9',
         ]
         if platform == 'youtube':
-            fetch_extra = ['--extractor-args', 'youtube:player_client=android,ios', '--no-check-certificates']
+            fetch_extra = ['--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
@@ -344,13 +344,10 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             quality_num = quality.replace('p', '')
             platform = detect_platform(url)
             if platform in ('instagram', 'tiktok', 'facebook'):
-                # Instagram/TikTok/FB serve combined video+audio streams.
-                # Prefer combined (best) first; fall back to merging separate streams.
+                # Instagram/TikTok/FB use DASH streams (separate video+audio tracks).
                 format_opts = [
                     '-f', (
-                        f'best[height<={quality_num}][ext=mp4][vcodec!=none][acodec!=none]'
-                        f'/best[height<={quality_num}][vcodec!=none][acodec!=none]'
-                        f'/bestvideo[height<={quality_num}]+bestaudio'
+                        f'bestvideo[height<={quality_num}]+bestaudio'
                         f'/best[height<={quality_num}]'
                         f'/best'
                     ),
@@ -373,7 +370,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
 
         platform = detect_platform(url)
         if platform == 'youtube':
-            yt_extra = ['--extractor-args', 'youtube:player_client=android,ios', '--no-check-certificates']
+            yt_extra = ['--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
             yt_extra = [
                 '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
