@@ -177,11 +177,17 @@ def fetch_info():
     playlist_url = is_playlist_url(url, platform)
 
     try:
-        mobile_ua = ['--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1']
+        mobile_ua = [
+            '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            '--add-header', 'Accept-Language:en-US,en;q=0.9',
+        ]
         if platform == 'youtube':
-            fetch_extra = ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
+            fetch_extra = ['--extractor-args', 'youtube:player_client=ios,web,mweb', '--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
-            fetch_extra = mobile_ua
+            fetch_extra = mobile_ua + [
+                '--add-header', 'Referer:https://www.instagram.com/',
+                '--no-check-certificates',
+            ]
         else:
             fetch_extra = []
 
@@ -197,11 +203,15 @@ def fetch_info():
                 return jsonify({'error': 'This video is private and cannot be downloaded.'}), 400
             elif 'age-restrict' in err or 'confirm your age' in err or 'inappropriate for some users' in err:
                 return jsonify({'error': 'This video is age-restricted.'}), 400
-            elif 'unavailable' in err or 'not available' in err:
-                return jsonify({'error': 'This video is unavailable in your region.'}), 400
+            elif 'login' in err or 'log in' in err or 'signin' in err or 'authentication' in err or '401' in err:
+                return jsonify({'error': 'This content requires login. Instagram/Facebook private content cannot be downloaded.'}), 400
             elif 'copyright' in err:
                 return jsonify({'error': 'This video has been removed due to copyright.'}), 400
-            return jsonify({'error': 'Failed to fetch video info. Please check the URL.'}), 400
+            elif 'unavailable' in err or 'not available' in err:
+                return jsonify({'error': 'This video is unavailable or region-restricted.'}), 400
+            # Log actual error for debugging
+            actual_err = result.stderr.strip().split('\n')[-1] if result.stderr.strip() else 'Unknown error'
+            return jsonify({'error': f'Failed to fetch video info. Please check the URL. ({actual_err[:120]})'}), 400
 
         lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
         if not lines:
@@ -247,8 +257,7 @@ def fetch_info():
         info_result = run_yt_dlp([
             '--dump-single-json',
             '--no-playlist',
-            url
-        ], timeout=30)
+        ] + fetch_extra + [url], timeout=45)
 
         if info_result.returncode != 0:
             return jsonify({'error': 'Failed to fetch video details.'}), 400
@@ -350,10 +359,14 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
 
         platform = detect_platform(url)
         if platform == 'youtube':
-            yt_extra = ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
+            yt_extra = ['--extractor-args', 'youtube:player_client=ios,web,mweb', '--no-check-certificates']
         elif platform in ('instagram', 'facebook', 'tiktok'):
-            # Instagram/TikTok/FB use mobile User-Agent to avoid login-wall errors
-            yt_extra = ['--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1']
+            yt_extra = [
+                '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                '--add-header', 'Accept-Language:en-US,en;q=0.9',
+                '--add-header', 'Referer:https://www.instagram.com/',
+                '--no-check-certificates',
+            ]
         else:
             yt_extra = []
 
