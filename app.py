@@ -342,18 +342,32 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             ]
         else:
             quality_num = quality.replace('p', '')
-            # Prefer H.264 video; allow ANY audio format (not just m4a) so
-            # Instagram/TikTok/FB audio streams are never skipped.
-            format_opts = [
-                '-f', (
-                    f'bestvideo[height<={quality_num}][vcodec^=avc1][ext=mp4]+bestaudio'
-                    f'/bestvideo[height<={quality_num}][vcodec^=avc][ext=mp4]+bestaudio'
-                    f'/bestvideo[height<={quality_num}]+bestaudio'
-                    f'/best[height<={quality_num}]'
-                    f'/best'
-                ),
-                '--merge-output-format', 'mp4',
-            ]
+            platform = detect_platform(url)
+            if platform in ('instagram', 'tiktok', 'facebook'):
+                # Instagram/TikTok/FB serve combined video+audio streams.
+                # Prefer combined (best) first; fall back to merging separate streams.
+                format_opts = [
+                    '-f', (
+                        f'best[height<={quality_num}][ext=mp4][vcodec!=none][acodec!=none]'
+                        f'/best[height<={quality_num}][vcodec!=none][acodec!=none]'
+                        f'/bestvideo[height<={quality_num}]+bestaudio'
+                        f'/best[height<={quality_num}]'
+                        f'/best'
+                    ),
+                    '--merge-output-format', 'mp4',
+                ]
+            else:
+                # YouTube: prefer H.264 video with separate best audio
+                format_opts = [
+                    '-f', (
+                        f'bestvideo[height<={quality_num}][vcodec^=avc1][ext=mp4]+bestaudio'
+                        f'/bestvideo[height<={quality_num}][vcodec^=avc][ext=mp4]+bestaudio'
+                        f'/bestvideo[height<={quality_num}]+bestaudio'
+                        f'/best[height<={quality_num}]'
+                        f'/best'
+                    ),
+                    '--merge-output-format', 'mp4',
+                ]
 
         playlist_opt = ['--yes-playlist'] if is_playlist else ['--no-playlist']
 
