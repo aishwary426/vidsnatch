@@ -470,7 +470,33 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             send('error', {'message': 'No files were downloaded.'})
             return
 
+        platform = detect_platform(url)
+
+        def ensure_aac(mp4_path: Path) -> Path:
+            """Re-encode audio to AAC-LC so HE-AAC (Instagram) plays on all devices."""
+            if fmt == 'mp3' or platform not in ('instagram', 'tiktok', 'facebook'):
+                return mp4_path
+            if mp4_path.suffix.lower() != '.mp4':
+                return mp4_path
+            fixed = mp4_path.with_stem(mp4_path.stem + '_aac')
+            try:
+                r = subprocess.run(
+                    [FFMPEG, '-y', '-i', str(mp4_path),
+                     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+                     '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+                     str(fixed)],
+                    capture_output=True, timeout=120
+                )
+                if r.returncode == 0 and fixed.exists():
+                    mp4_path.unlink()
+                    fixed.rename(mp4_path)
+            except Exception:
+                pass
+            return mp4_path
+
         if is_playlist and len(files) > 1:
+            for fp in files:
+                ensure_aac(fp)
             zip_name = f'playlist_{session_id}.zip'
             zip_path = DOWNLOADS_DIR / zip_name
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -483,6 +509,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             })
         else:
             f = files[0]
+            ensure_aac(f)
             dest = DOWNLOADS_DIR / f.name
             f.rename(dest)
             send('complete', {
