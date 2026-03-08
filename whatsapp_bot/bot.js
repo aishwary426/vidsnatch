@@ -29,22 +29,23 @@ function getVideoCodec(filePath) {
   } catch { return 'unknown'; }
 }
 
-// Make MP4 WhatsApp-compatible.
-// If already H.264 → stream copy (near-instant). Otherwise → ultrafast re-encode.
+// Make video WhatsApp-compatible (H.264 video + AAC audio in MP4 container).
+// Stream-copies video if already H.264 (near-instant), but always re-encodes audio to AAC.
+// Handles any input container (mp4, webm, mkv, mov, …).
 function transcodeForWhatsApp(inputPath) {
   return new Promise((resolve) => {
     if (!FFMPEG_BIN) { resolve(inputPath); return; }
-    if (path.extname(inputPath).toLowerCase() !== '.mp4') { resolve(inputPath); return; }
 
+    const outputPath = inputPath.replace(/\.[^.]+$/, '_wa.mp4');
     const codec = getVideoCodec(inputPath);
     const alreadyH264 = codec === 'h264';
-    const outputPath = inputPath.replace(/\.mp4$/, '_wa.mp4');
 
-    console.log(`   🎞  Codec: ${codec} → ${alreadyH264 ? 'stream copy (instant)' : 're-encoding to H.264'}`);
+    console.log(`   🎞  Codec: ${codec} → ${alreadyH264 ? 'copy video + AAC audio' : 're-encoding to H.264+AAC'}`);
 
+    // Always force AAC audio so WhatsApp plays audio in both inline and doc mode.
     const args = alreadyH264
-      ? ['-i', inputPath, '-c', 'copy', '-movflags', '+faststart', '-y', outputPath]
-      : ['-i', inputPath, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+      ? ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', outputPath]
+      : ['-i', inputPath, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', outputPath];
 
     execFile(FFMPEG_BIN, args, { timeout: 5 * 60 * 1000 }, (err) => {
       if (err) {
@@ -56,6 +57,12 @@ function transcodeForWhatsApp(inputPath) {
       }
     });
   });
+}
+
+// Build a text progress bar, e.g. "█████░░░░░"
+function buildProgressBar(percent, width = 10) {
+  const filled = Math.min(Math.round((percent / 100) * width), width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
 // ── Config ────────────────────────────────────────────────────────
@@ -158,13 +165,19 @@ function downloadFile(fileUrl, destPath) {
   });
 }
 
-function waitForDownload(sessionId) {
+function waitForDownload(sessionId, onProgress) {
   return new Promise((resolve, reject) => {
     const es = new EventSource(`${FLASK_URL}/api/progress/${sessionId}`);
     const timer = setTimeout(() => {
       es.close();
       reject(new Error('Download timed out after 10 minutes.'));
     }, DOWNLOAD_TIMEOUT_MS);
+
+    es.addEventListener('progress', e => {
+      if (onProgress) {
+        try { onProgress(JSON.parse(e.data)); } catch {}
+      }
+    });
 
     es.addEventListener('complete', e => {
       clearTimeout(timer);
@@ -213,7 +226,7 @@ async function handleMessage(msg, client) {
   const cmd = parseCommand(msg.body);
   if (!cmd) return;
 
-  const { url, fmt, quality, isPlaylist, platform } = cmd;
+  const { url, fmt, quality, platform } = cmd;
   const icon = PLATFORM_ICON[platform] || '🎬';
   const label = fmt === 'mp3' ? `MP3 ${quality}` : `MP4 ${quality}`;
   console.log(`[${new Date().toLocaleTimeString()}] ${msg.from} → ${url} (${label})`);
@@ -238,15 +251,26 @@ async function handleMessage(msg, client) {
     metaTitle = meta.title || 'your video';
     const isPlaylistMeta = meta.type === 'playlist';
 
-    const infoLines = [
-      `${icon} *${metaTitle}*`,
-      isPlaylistMeta ? `📋 Playlist — ${meta.count} videos` : '',
-      meta.channel ? `👤 ${meta.channel}` : '',
-      `🎯 Format: ${label}`,
-      `⏳ Downloading, please wait...`,
-    ].filter(Boolean).join('\n');
+    const buildStatusMsg = (prog) => {
+      const lines = [
+        `${icon} *${metaTitle}*`,
+        isPlaylistMeta ? `📋 Playlist — ${meta.count} videos` : '',
+        meta.channel ? `👤 ${meta.channel}` : '',
+        `🎯 Format: ${label}`,
+      ].filter(Boolean);
 
-    await msg.reply(infoLines);
+      if (prog) {
+        const bar = buildProgressBar(prog.percent);
+        lines.push(`\n📥 ${bar} ${prog.percent.toFixed(1)}%`);
+        if (prog.speed && prog.eta) lines.push(`⚡ ${prog.speed}  •  ⏱ ETA ${prog.eta}`);
+        if (prog.size) lines.push(`📦 ${prog.size}`);
+      } else {
+        lines.push(`⏳ Starting download...`);
+      }
+      return lines.join('\n');
+    };
+
+    const statusMsg = await msg.reply(buildStatusMsg(null));
 
     // 2. Start download
     const dlRes = await fetchJSON(`${FLASK_URL}/api/download`, {
@@ -256,12 +280,18 @@ async function handleMessage(msg, client) {
 
     if (dlRes.status !== 200) {
       await msg.react('❌');
-      await msg.reply(`❌ *Download error:* ${dlRes.data.error || 'Server error.'}`);
+      await statusMsg.edit(`❌ *Download error:* ${dlRes.data.error || 'Server error.'}`).catch(() => {});
       return;
     }
 
-    // 3. Wait for completion via SSE
-    const completed = await waitForDownload(dlRes.data.session_id);
+    // 3. Wait for completion via SSE, editing the status message with live progress
+    let lastEditAt = 0;
+    const completed = await waitForDownload(dlRes.data.session_id, async (prog) => {
+      const now = Date.now();
+      if (now - lastEditAt < 5000) return;   // throttle: edit at most once per 5 s
+      lastEditAt = now;
+      await statusMsg.edit(buildStatusMsg(prog)).catch(() => {});
+    });
 
     // 4. Fetch file to local /tmp
     const fileUrl = `${FLASK_URL}${completed.url}`;
@@ -270,10 +300,10 @@ async function handleMessage(msg, client) {
 
     console.log(`   ✅ ${completed.filename}`);
 
-    // 5. Transcode MP4 to H.264/AAC so WhatsApp plays it inline
+    // 5. Transcode to H.264+AAC MP4 so WhatsApp plays all video inline
     let sendPath = tmpPath;
     if (fmt !== 'mp3') {
-      console.log('   🔄 Transcoding to H.264 for WhatsApp compatibility...');
+      console.log('   🔄 Transcoding to H.264+AAC for WhatsApp compatibility...');
       sendPath = await transcodeForWhatsApp(tmpPath);
     }
 

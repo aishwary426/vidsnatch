@@ -16,9 +16,10 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install Python dependencies (upgrade yt-dlp to latest to keep up with YouTube changes)
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
+    pip3 install --no-cache-dir --break-system-packages --upgrade yt-dlp
 
 # Install Node dependencies
 COPY whatsapp_bot/package.json whatsapp_bot/package-lock.json* whatsapp_bot/

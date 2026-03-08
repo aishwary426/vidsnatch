@@ -342,12 +342,18 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
 
         playlist_opt = ['--yes-playlist'] if is_playlist else ['--no-playlist']
 
+        platform = detect_platform(url)
+        yt_extra = (
+            ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
+            if platform == 'youtube' else []
+        )
+
         cmd = YT_DLP + [
             '--newline',
             '--progress',
             '-o', str(session_dir / '%(title)s.%(ext)s'),
             '--ffmpeg-location', FFMPEG,
-        ] + format_opts + playlist_opt + [url]
+        ] + yt_extra + format_opts + playlist_opt + [url]
 
         process = subprocess.Popen(
             cmd,
