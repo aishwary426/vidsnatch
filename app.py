@@ -178,13 +178,18 @@ def fetch_info():
 
     try:
         mobile_ua = ['--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1']
-        fetch_extra = mobile_ua if platform in ('instagram', 'facebook', 'tiktok') else []
+        if platform == 'youtube':
+            fetch_extra = ['--extractor-args', 'youtube:player_client=tv,ios', '--no-check-certificates']
+        elif platform in ('instagram', 'facebook', 'tiktok'):
+            fetch_extra = mobile_ua
+        else:
+            fetch_extra = []
 
         result = run_yt_dlp([
             '--dump-json',
             '--yes-playlist' if playlist_url else '--no-playlist',
             '--flat-playlist',
-        ] + fetch_extra + [url], timeout=30)
+        ] + fetch_extra + [url], timeout=45)
 
         if result.returncode != 0:
             err = result.stderr.lower()
@@ -328,13 +333,12 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             ]
         else:
             quality_num = quality.replace('p', '')
-            # Prefer mp4+m4a merge; fall back to any video+audio; last resort: best
+            # Prefer H.264 video; allow ANY audio format (not just m4a) so
+            # Instagram/TikTok/FB audio streams are never skipped.
             format_opts = [
                 '-f', (
-                    # Prefer H.264 (avc1) so no re-encoding is needed downstream
-                    f'bestvideo[height<={quality_num}][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]'
-                    f'/bestvideo[height<={quality_num}][vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]'
-                    f'/bestvideo[height<={quality_num}][ext=mp4]+bestaudio[ext=m4a]'
+                    f'bestvideo[height<={quality_num}][vcodec^=avc1][ext=mp4]+bestaudio'
+                    f'/bestvideo[height<={quality_num}][vcodec^=avc][ext=mp4]+bestaudio'
                     f'/bestvideo[height<={quality_num}]+bestaudio'
                     f'/best[height<={quality_num}]'
                     f'/best'
