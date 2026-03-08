@@ -347,6 +347,8 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
                 # Instagram/TikTok/FB use DASH streams (separate video+audio tracks).
                 # Reels are portrait (e.g. 720x1280): quality_num maps to WIDTH, not height.
                 # Use width-based filter so "720p" captures the 720x1280 stream.
+                # Re-encode audio to AAC-LC (128k) because Instagram serves HE-AAC
+                # (mp4a.40.5) which many players/WhatsApp don't decode audibly.
                 format_opts = [
                     '-f', (
                         f'bestvideo[width<={quality_num}]+bestaudio'
@@ -354,6 +356,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
                         f'/best'
                     ),
                     '--merge-output-format', 'mp4',
+                    '--postprocessor-args', 'Merger+ffmpeg_o:-c:a aac -b:a 128k -ar 44100 -ac 2',
                 ]
             else:
                 # YouTube: prefer H.264 video with separate best audio

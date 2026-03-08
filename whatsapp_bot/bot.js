@@ -42,11 +42,12 @@ function transcodeForWhatsApp(inputPath) {
 
     console.log(`   🎞  Codec: ${codec} → ${alreadyH264 ? 'copy video + AAC audio' : 're-encoding to H.264+AAC'}`);
 
-    // Always force AAC audio so WhatsApp plays audio in both inline and doc mode.
-    // -map 0:a:0? makes audio optional — won't fail on silent/video-only reels.
+    // Force AAC-LC audio (44100 Hz stereo) so WhatsApp plays audio in all modes.
+    // HE-AAC (mp4a.40.5) from Instagram is re-encoded here to standard AAC-LC.
+    const audioArgs = ['-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2'];
     const args = alreadyH264
-      ? ['-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', outputPath]
-      : ['-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', outputPath];
+      ? ['-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', ...audioArgs, '-movflags', '+faststart', '-y', outputPath]
+      : ['-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', ...audioArgs, '-movflags', '+faststart', '-y', outputPath];
 
     execFile(FFMPEG_BIN, args, { timeout: 5 * 60 * 1000 }, (err) => {
       if (err) {
