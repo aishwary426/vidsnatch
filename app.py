@@ -53,6 +53,27 @@ YT_DLP = get_yt_dlp_path()
 FFMPEG = get_ffmpeg_path()
 
 
+def get_youtube_cookie_args():
+    """Return --cookies-from-browser args if a supported browser is found locally."""
+    import sys
+    if sys.platform == 'darwin':
+        candidates = [
+            ('chrome', ['/Applications/Google Chrome.app']),
+            ('safari', None),  # always present on macOS
+            ('firefox', ['/Applications/Firefox.app']),
+        ]
+        for browser, paths in candidates:
+            if paths is None or any(os.path.exists(p) for p in paths):
+                return ['--cookies-from-browser', browser]
+    elif sys.platform.startswith('linux'):
+        for browser in ['chrome', 'chromium', 'firefox']:
+            if shutil.which(browser):
+                return ['--cookies-from-browser', browser]
+    return []
+
+YOUTUBE_COOKIE_ARGS = get_youtube_cookie_args()
+
+
 def run_yt_dlp(args, timeout=60):
     cmd = YT_DLP + args
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -185,7 +206,7 @@ def fetch_info():
             fetch_extra = [
                 '--no-check-certificates',
                 '--extractor-args', 'youtube:player_client=android,web',
-            ]
+            ] + YOUTUBE_COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
@@ -383,7 +404,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
             yt_extra = [
                 '--no-check-certificates',
                 '--extractor-args', 'youtube:player_client=android,web',
-            ]
+            ] + YOUTUBE_COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             yt_extra = [
                 '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
