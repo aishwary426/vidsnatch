@@ -1,9 +1,12 @@
 import os
 import re
+import sys
 import json
 import uuid
+import base64
 import shutil
 import zipfile
+import tempfile
 import threading
 import subprocess
 from pathlib import Path
@@ -53,33 +56,48 @@ YT_DLP = get_yt_dlp_path()
 FFMPEG = get_ffmpeg_path()
 
 
-def get_youtube_cookie_args():
-    """Return --cookies-from-browser args if a real browser with cookies exists locally.
-    Only applies on macOS (local dev). Servers won't have browser cookie stores.
+COOKIES_FILE = Path('cookies.txt')
+
+
+def _init_cookies():
+    """Write cookies.txt from COOKIES_B64 env var if present (Railway/server).
+    Returns path to cookies file if available, else None.
     """
-    import sys
-    if sys.platform != 'darwin':
-        return []
-    candidates = [
-        ('chrome', '/Applications/Google Chrome.app'),
-        ('firefox', '/Applications/Firefox.app'),
-        ('safari', None),  # always present on macOS
-    ]
-    for browser, app_path in candidates:
-        if app_path is None or os.path.exists(app_path):
-            return ['--cookies-from-browser', browser]
+    b64 = os.environ.get('COOKIES_B64', '').strip()
+    if b64:
+        try:
+            COOKIES_FILE.write_bytes(base64.b64decode(b64))
+            print('[cookies] Loaded cookies.txt from COOKIES_B64 env var.')
+            return COOKIES_FILE
+        except Exception as e:
+            print(f'[cookies] Failed to decode COOKIES_B64: {e}')
+    if COOKIES_FILE.exists():
+        print('[cookies] Using existing cookies.txt file.')
+        return COOKIES_FILE
+    return None
+
+
+def get_cookie_args():
+    """Return cookie args for yt-dlp. Prefer cookies.txt (server), then browser (macOS)."""
+    cookies_path = _init_cookies()
+    if cookies_path:
+        return ['--cookies', str(cookies_path)]
+    if sys.platform == 'darwin':
+        for browser, app_path in [
+            ('chrome', '/Applications/Google Chrome.app'),
+            ('firefox', '/Applications/Firefox.app'),
+            ('safari', None),
+        ]:
+            if app_path is None or os.path.exists(app_path):
+                return ['--cookies-from-browser', browser]
     return []
 
-YOUTUBE_COOKIE_ARGS = get_youtube_cookie_args()
-# Only use android client fallback when there are no browser cookies.
-# The android client skips 720p/1080p DASH streams (PO token required),
-# so prefer the authenticated web client when cookies are available.
-YOUTUBE_EXTRACTOR_ARGS = [] if YOUTUBE_COOKIE_ARGS else [
+
+COOKIE_ARGS = get_cookie_args()
+# Only use android client fallback when there are no cookies at all.
+YOUTUBE_EXTRACTOR_ARGS = [] if COOKIE_ARGS else [
     '--extractor-args', 'youtube:player_client=android,web',
 ]
-# Instagram/Facebook also require login for most content now.
-# Reuse the same browser cookie source.
-INSTAGRAM_COOKIE_ARGS = YOUTUBE_COOKIE_ARGS
 
 
 def run_yt_dlp(args, timeout=60):
@@ -213,12 +231,12 @@ def fetch_info():
         if platform == 'youtube':
             fetch_extra = [
                 '--no-check-certificates',
-            ] + YOUTUBE_EXTRACTOR_ARGS + YOUTUBE_COOKIE_ARGS
+            ] + YOUTUBE_EXTRACTOR_ARGS + COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
                 '--no-check-certificates',
-            ] + INSTAGRAM_COOKIE_ARGS
+            ] + COOKIE_ARGS
         else:
             fetch_extra = []
 
@@ -410,14 +428,14 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
         if platform == 'youtube':
             yt_extra = [
                 '--no-check-certificates',
-            ] + YOUTUBE_EXTRACTOR_ARGS + YOUTUBE_COOKIE_ARGS
+            ] + YOUTUBE_EXTRACTOR_ARGS + COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             yt_extra = [
                 '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
                 '--add-header', 'Accept-Language:en-US,en;q=0.9',
                 '--add-header', 'Referer:https://www.instagram.com/',
                 '--no-check-certificates',
-            ] + INSTAGRAM_COOKIE_ARGS
+            ] + COOKIE_ARGS
         else:
             yt_extra = []
 
