@@ -77,6 +77,9 @@ YOUTUBE_COOKIE_ARGS = get_youtube_cookie_args()
 YOUTUBE_EXTRACTOR_ARGS = [] if YOUTUBE_COOKIE_ARGS else [
     '--extractor-args', 'youtube:player_client=android,web',
 ]
+# Instagram/Facebook also require login for most content now.
+# Reuse the same browser cookie source.
+INSTAGRAM_COOKIE_ARGS = YOUTUBE_COOKIE_ARGS
 
 
 def run_yt_dlp(args, timeout=60):
@@ -215,7 +218,7 @@ def fetch_info():
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
                 '--no-check-certificates',
-            ]
+            ] + INSTAGRAM_COOKIE_ARGS
         else:
             fetch_extra = []
 
@@ -234,7 +237,7 @@ def fetch_info():
             elif 'sign in to confirm' in err or 'confirm you' in err and 'bot' in err:
                 return jsonify({'error': 'YouTube is requiring sign-in verification. Please try again in a moment.'}), 400
             elif 'login required' in err or 'login_required' in err or 'log in to' in err or 'not logged in' in err:
-                return jsonify({'error': 'This content requires login. Instagram/Facebook private content cannot be downloaded.'}), 400
+                return jsonify({'error': 'This content requires Instagram login. Make sure you are logged into Instagram in your browser.'}), 400
             elif 'copyright' in err:
                 return jsonify({'error': 'This video has been removed due to copyright.'}), 400
             elif 'unavailable' in err or 'not available' in err:
@@ -414,7 +417,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
                 '--add-header', 'Accept-Language:en-US,en;q=0.9',
                 '--add-header', 'Referer:https://www.instagram.com/',
                 '--no-check-certificates',
-            ]
+            ] + INSTAGRAM_COOKIE_ARGS
         else:
             yt_extra = []
 
