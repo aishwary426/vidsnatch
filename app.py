@@ -71,6 +71,12 @@ def get_youtube_cookie_args():
     return []
 
 YOUTUBE_COOKIE_ARGS = get_youtube_cookie_args()
+# Only use android client fallback when there are no browser cookies.
+# The android client skips 720p/1080p DASH streams (PO token required),
+# so prefer the authenticated web client when cookies are available.
+YOUTUBE_EXTRACTOR_ARGS = [] if YOUTUBE_COOKIE_ARGS else [
+    '--extractor-args', 'youtube:player_client=android,web',
+]
 
 
 def run_yt_dlp(args, timeout=60):
@@ -204,8 +210,7 @@ def fetch_info():
         if platform == 'youtube':
             fetch_extra = [
                 '--no-check-certificates',
-                '--extractor-args', 'youtube:player_client=android,web',
-            ] + YOUTUBE_COOKIE_ARGS
+            ] + YOUTUBE_EXTRACTOR_ARGS + YOUTUBE_COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             fetch_extra = mobile_ua + [
                 '--add-header', 'Referer:https://www.instagram.com/',
@@ -402,8 +407,7 @@ def download_worker(session_id, url, fmt, quality, is_playlist):
         if platform == 'youtube':
             yt_extra = [
                 '--no-check-certificates',
-                '--extractor-args', 'youtube:player_client=android,web',
-            ] + YOUTUBE_COOKIE_ARGS
+            ] + YOUTUBE_EXTRACTOR_ARGS + YOUTUBE_COOKIE_ARGS
         elif platform in ('instagram', 'facebook', 'tiktok'):
             yt_extra = [
                 '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
