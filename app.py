@@ -54,21 +54,20 @@ FFMPEG = get_ffmpeg_path()
 
 
 def get_youtube_cookie_args():
-    """Return --cookies-from-browser args if a supported browser is found locally."""
+    """Return --cookies-from-browser args if a real browser with cookies exists locally.
+    Only applies on macOS (local dev). Servers won't have browser cookie stores.
+    """
     import sys
-    if sys.platform == 'darwin':
-        candidates = [
-            ('chrome', ['/Applications/Google Chrome.app']),
-            ('safari', None),  # always present on macOS
-            ('firefox', ['/Applications/Firefox.app']),
-        ]
-        for browser, paths in candidates:
-            if paths is None or any(os.path.exists(p) for p in paths):
-                return ['--cookies-from-browser', browser]
-    elif sys.platform.startswith('linux'):
-        for browser in ['chrome', 'chromium', 'firefox']:
-            if shutil.which(browser):
-                return ['--cookies-from-browser', browser]
+    if sys.platform != 'darwin':
+        return []
+    candidates = [
+        ('chrome', '/Applications/Google Chrome.app'),
+        ('firefox', '/Applications/Firefox.app'),
+        ('safari', None),  # always present on macOS
+    ]
+    for browser, app_path in candidates:
+        if app_path is None or os.path.exists(app_path):
+            return ['--cookies-from-browser', browser]
     return []
 
 YOUTUBE_COOKIE_ARGS = get_youtube_cookie_args()
